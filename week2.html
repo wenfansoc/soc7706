@@ -360,15 +360,13 @@ models</h1>
 
 <p>The research question we address is: Does job insecurity predict
 general happiness? The data set we will use comes from the General
-Social Surveys 2010 Panel, which can be downloaded <a href="https://gss.norc.org/us/en/gss/get-the-data/stata.html">here</a> —
-titled “GSS Panel 2010–Sample Wave 3 (Release 6, March 2018)” in the
-“Panel Data Sets” section. For the purpose of this week, we will
-restrict our analyses to the first two waves.</p>
+Social Surveys 2010 Panel, which can be downloaded <a href="https://gss.norc.org/us/en/gss/get-the-data/stata.html">here</a>–titled
+“GSS Panel 2010–Sample Wave 3 (Release 6, March 2018)” in the “Panel
+Data Sets” section. For the purpose of this week, we will restrict our
+analyses to the first two waves.</p>
 <div id="install-and-load-r-packages" class="section level3">
 <h3>Install and load R packages</h3>
-<p>First, load the necessary libraries and the data. We are examining
-the relationship between job insecurity and general happiness over two
-time points.</p>
+<p>First, load the necessary libraries and the data.</p>
 <pre class="r"><code>#install.packages(c(&#39;tidyverse&#39;, &#39;haven&#39;, &#39;corrplot&#39;, &#39;sjPlot&#39;))
 library(tidyverse)
 library(haven)
@@ -380,11 +378,11 @@ library(sjPlot)</code></pre>
 <div id="descriptive-analysis" class="section level3">
 <h3>Descriptive analysis</h3>
 <p>Let’s take a look at the summary statistics for job insecurity and
-happiness, the first 10 rows of data to see structure, and correlation
-matrix and plot between variables.</p>
-<p>Are means and standard deviations reasonable? How correlated are W1
-and W2 measures? Are there strong correlations between the predictor and
-the outcome?</p>
+happiness, the first 10 rows of data to get a sense of its structure,
+and the correlation matrix and plot between variables.</p>
+<p>Do the means and standard deviations look reasonable? How correlated
+are the Wave 1 and Wave 2 measures? Are there strong correlations
+between the predictor and the outcome?</p>
 <pre class="r"><code># Data cleaning
 gss$joblose_1 &lt;- 5 - gss$joblose_1
 gss$joblose_2 &lt;- 5 - gss$joblose_2
@@ -431,9 +429,12 @@ corrplot(cor_matrix, method = &quot;color&quot;, type = &quot;upper&quot;,
 <div id="lagged-dependent-variable-model" class="section level3">
 <h3>Lagged dependent variable model</h3>
 <p>Does job insecurity at Wave 1 predict general happiness at Wave 2,
-controlling for baseline job insecurity?</p>
-<p>How do we interpret the coefficients for the LDV and job insecurity?
-How much variance is explained?</p>
+controlling for baseline happiness? Note that happiness is not a
+continuous variable, so strictly speaking, OLS is not the best model. I
+am using it here for simplicity.</p>
+<p>How should we interpret the coefficients for the lagged dependent
+variable (LDV) and job insecurity? How much of the variance is
+explained?</p>
 <pre class="r"><code># Basic LDV model
 ldv1 &lt;- lm(happy_2 ~ joblose_1 + happy_1, data = gss)
 summary(ldv1)</code></pre>
@@ -462,7 +463,7 @@ base &lt;- lm(happy_2 ~ happy_1, data = gss)
 r2_change &lt;- summary(ldv1)$r.squared - summary(base)$r.squared
 cat(&quot;R-squared change from adding job insecurity:&quot;, round(r2_change, 3))</code></pre>
 <pre><code>## R-squared change from adding job insecurity: 0.028</code></pre>
-<p>We can keep adding other covariates.</p>
+<p>We can continue adding other covariates.</p>
 <pre class="r"><code>ldv2 &lt;- update(ldv1, . ~ . + factor(race_1))
 summary(ldv2)</code></pre>
 <pre><code>## 
@@ -492,8 +493,8 @@ summary(ldv2)</code></pre>
 <div id="change-score-model" class="section level3">
 <h3>Change score model</h3>
 <p>What predicts the amount of change in general happiness?</p>
-<p>How do we interpret the coefficient for job insecurity? How much of
-the change variance is explained?</p>
+<p>How should we interpret the coefficient for job insecurity? How much
+of the variance in change is explained?</p>
 <pre class="r"><code># Basic change score model
 gss$change_happy &lt;- gss$happy_2 - gss$happy_1
 cs1 &lt;- lm(change_happy ~ joblose_1, data = gss)
@@ -516,8 +517,9 @@ summary(cs1)</code></pre>
 ##   (1430 observations deleted due to missingness)
 ## Multiple R-squared:  0.001739,   Adjusted R-squared:  0.0001077 
 ## F-statistic: 1.066 on 1 and 612 DF,  p-value: 0.3022</code></pre>
-<p>Note the mathematical equivalence to the LDV model if we add an LDV
-in a change score model (note the predictor coefficients).</p>
+<p>Note the mathematical equivalence to the LDV model if we include a
+lagged dependent variable in the change score model–pay attention to the
+predictor coefficients.</p>
 <pre class="r"><code># What if we add the lagged dependent variable?
 cs2 &lt;- update(cs1, . ~ . + happy_1)
 
@@ -670,7 +672,8 @@ R<sup>2</sup> / R<sup>2</sup> adjusted
 </td>
 </tr>
 </table>
-<p>Diagnostic plots for both models.</p>
+<p>Diagnostic plots for both models–check for patterns that might
+indicate issues with model fit or assumptions.</p>
 <pre class="r"><code>par(mfrow = c(2, 2))
 
 # Residuals vs fitted for LDV model
