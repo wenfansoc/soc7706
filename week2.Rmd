@@ -6,7 +6,7 @@ output: html_document
 ---
 
 
-The research question we address is: Does job insecurity predict general happiness? The data set we will use comes from the General Social Surveys 2010 Panel, which can be downloaded [here](https://gss.norc.org/us/en/gss/get-the-data/stata.html)--titled “GSS Panel 2010–Sample Wave 3 (Release 6, March 2018)” in the “Panel Data Sets” section. For the purpose of this week, we will restrict our analyses to the first two waves.
+The research question we address is: Does job insecurity predict general happiness? The data set we will use comes from the General Social Surveys 2010 Panel, which can be downloaded [here](https://gss.norc.org/us/en/gss/get-the-data/stata.html)---titled “GSS Panel 2010–Sample Wave 3 (Release 6, March 2018)” in the “Panel Data Sets” section. For the purpose of this week, we will restrict our analyses to the first two waves.
 
 ### Install and load R packages
 
@@ -101,7 +101,7 @@ summary(cs2)
 tab_model(ldv1, cs2)
 ```
 
-Diagnostic plots for both models--check for patterns that might indicate issues with model fit or assumptions.
+Diagnostic plots for both models---check for patterns that might indicate issues with model fit or assumptions.
 
 ```{r}
 par(mfrow = c(2, 2))
