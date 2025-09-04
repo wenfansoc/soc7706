@@ -1,0 +1,116 @@
+---
+title: "Lagged dependent variable and change score models"
+author: "Wen Fan"
+date: "2025-09-03"
+output: html_document
+---
+
+
+The research question we want to address is: does job insecurity predict general happiness? For the purpose of this week, we will restrict our analyses to the first two waves.
+
+### Install and load R packages
+
+Let's first load required libraries and the data. We're studying the relationship between job insecurity and general happiness over two time points. The data set we will be using come from the General Social Surveys 2010 Panel, which you can download [here](https://gss.norc.org/us/en/gss/get-the-data/stata.html)--"GSS Panel 2010-Sample Wave 3 (Release 6, March 2018)" under "Panel Data Sets".
+
+```{r message=FALSE}
+#install.packages(c('tidyverse', 'haven', 'corrplot', 'sjPlot'))
+library(tidyverse)
+library(haven)
+library(corrplot)
+library(sjPlot)
+```
+%>%
+```{r}
+gss <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/GSS_panel2010w123_R6 - stata.dta")
+```
+
+### Descriptive analysis
+
+Let's take a look at the summary statistics for job insecurity and happiness, the first 10 rows of data to see structure, and correlation matrix and plot between variables.
+
+Are means and standard deviations reasonable? How correlated are W1 and W2 measures? Are there strong correlations between the predictor and the outcome?
+
+```{r}
+# Data cleaning
+gss$joblose_1 <- 5 - gss$joblose_1
+gss$joblose_2 <- 5 - gss$joblose_2
+gss$happy_1 <- 4 - gss$happy_1
+gss$happy_2 <- 4 - gss$happy_2
+
+# Summary statistics
+gss %>% select("joblose_1", "joblose_2", "happy_1", "happy_2") %>% summary()
+
+# First 10 rows of data
+head(gss[, c("joblose_1", "joblose_2", "happy_1", "happy_2")], 10)
+
+# Correlation matrix
+cor_matrix <- gss %>% select("joblose_1", "joblose_2", "happy_1", "happy_2") %>% cor(use = "complete.obs")
+```
+
+```{r}
+# Correlation plot
+corrplot(cor_matrix, method = "color", type = "upper",
+         title = "Correlation Matrix", mar = c(0, 0, 1, 0))
+```
+
+### Lagged dependent variable model
+
+Does job insecurity at Wave 1 predict general happiness at Wave 2, controlling for baseline job insecurity?
+
+How do we interpret the coefficients for the LDV and job insecurity? How much variance is explained?
+
+```{r}
+# Basic LDV model
+ldv1 <- lm(happy_2 ~ joblose_1 + happy_1, data = gss)
+summary(ldv1)
+
+# Calculate change in R-squared after adding baseline job insecurity
+base <- lm(happy_2 ~ happy_1, data = gss)
+r2_change <- summary(ldv1)$r.squared - summary(base)$r.squared
+cat("R-squared change from adding job insecurity:", round(r2_change, 3))
+```
+
+We can keep adding other covariates.
+
+```{r}
+ldv2 <- update(ldv1, . ~ . + factor(race_1))
+summary(ldv2)
+```
+
+### Change score model
+
+What predicts the amount of change in general happiness?
+
+How do we interpret the coefficient for job insecurity? How much of the change variance is explained?
+
+```{r}
+# Basic change score model
+gss$change_happy <- gss$happy_2 - gss$happy_1
+cs1 <- lm(change_happy ~ joblose_1, data = gss)
+
+summary(cs1)
+```
+
+Note the mathematical equivalence to the LDV model if we add an LDV in a change score model (note the predictor coefficients).
+
+```{r}
+# What if we add the lagged dependent variable?
+cs2 <- update(cs1, . ~ . + happy_1)
+
+summary(cs2)
+tab_model(ldv1, cs2)
+```
+
+Diagnostic plots for both models.
+
+```{r}
+par(mfrow = c(2, 2))
+
+# Residuals vs fitted for LDV model
+plot(ldv1, which = 1, main = "LDV: Residuals vs Fitted")
+plot(ldv1, which = 2, main = "LDV: Q-Q Plot")
+
+# Residuals vs fitted for change score model
+plot(cs1, which = 1, main = "Change Score: Residuals vs Fitted")
+plot(cs1, which = 2, main = "Change Score: Q-Q Plot")
+```
