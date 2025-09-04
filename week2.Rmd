@@ -6,11 +6,11 @@ output: html_document
 ---
 
 
-The research question we want to address is: does job insecurity predict general happiness? For the purpose of this week, we will restrict our analyses to the first two waves.
+The research question we address is: Does job insecurity predict general happiness? The data set we will use comes from the General Social Surveys 2010 Panel, which can be downloaded [here](https://gss.norc.org/us/en/gss/get-the-data/stata.html) — titled “GSS Panel 2010–Sample Wave 3 (Release 6, March 2018)” in the “Panel Data Sets” section. For the purpose of this week, we will restrict our analyses to the first two waves.
 
 ### Install and load R packages
 
-Let's first load required libraries and the data. We're studying the relationship between job insecurity and general happiness over two time points. The data set we will be using come from the General Social Surveys 2010 Panel, which you can download [here](https://gss.norc.org/us/en/gss/get-the-data/stata.html)--"GSS Panel 2010-Sample Wave 3 (Release 6, March 2018)" under "Panel Data Sets".
+First, load the necessary libraries and the data. We are examining the relationship between job insecurity and general happiness over two time points. 
 
 ```{r message=FALSE}
 #install.packages(c('tidyverse', 'haven', 'corrplot', 'sjPlot'))
@@ -38,13 +38,13 @@ gss$happy_1 <- 4 - gss$happy_1
 gss$happy_2 <- 4 - gss$happy_2
 
 # Summary statistics
-gss %>% select("joblose_1", "joblose_2", "happy_1", "happy_2") %>% summary()
+gss |> select("joblose_1", "joblose_2", "happy_1", "happy_2") |> summary()
 
 # First 10 rows of data
 head(gss[, c("joblose_1", "joblose_2", "happy_1", "happy_2")], 10)
 
 # Correlation matrix
-cor_matrix <- gss %>% select("joblose_1", "joblose_2", "happy_1", "happy_2") %>% cor(use = "complete.obs")
+(cor_matrix <- gss |> select("joblose_1", "joblose_2", "happy_1", "happy_2") |> cor(use = "complete.obs"))
 ```
 
 ```{r}

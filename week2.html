@@ -358,17 +358,17 @@ models</h1>
 </div>
 
 
-<p>The research question we want to address is: does job insecurity
-predict general happiness? For the purpose of this week, we will
+<p>The research question we address is: Does job insecurity predict
+general happiness? The data set we will use comes from the General
+Social Surveys 2010 Panel, which can be downloaded <a href="https://gss.norc.org/us/en/gss/get-the-data/stata.html">here</a> —
+titled “GSS Panel 2010–Sample Wave 3 (Release 6, March 2018)” in the
+“Panel Data Sets” section. For the purpose of this week, we will
 restrict our analyses to the first two waves.</p>
 <div id="install-and-load-r-packages" class="section level3">
 <h3>Install and load R packages</h3>
-<p>Let’s first load required libraries and the data. We’re studying the
-relationship between job insecurity and general happiness over two time
-points. The data set we will be using come from the General Social
-Surveys 2010 Panel, which you can download <a href="https://gss.norc.org/us/en/gss/get-the-data/stata.html">here</a>–“GSS
-Panel 2010-Sample Wave 3 (Release 6, March 2018)” under “Panel Data
-Sets”.</p>
+<p>First, load the necessary libraries and the data. We are examining
+the relationship between job insecurity and general happiness over two
+time points.</p>
 <pre class="r"><code>#install.packages(c(&#39;tidyverse&#39;, &#39;haven&#39;, &#39;corrplot&#39;, &#39;sjPlot&#39;))
 library(tidyverse)
 library(haven)
@@ -392,7 +392,7 @@ gss$happy_1 &lt;- 4 - gss$happy_1
 gss$happy_2 &lt;- 4 - gss$happy_2
 
 # Summary statistics
-gss %&gt;% select(&quot;joblose_1&quot;, &quot;joblose_2&quot;, &quot;happy_1&quot;, &quot;happy_2&quot;) %&gt;% summary()</code></pre>
+gss |&gt; select(&quot;joblose_1&quot;, &quot;joblose_2&quot;, &quot;happy_1&quot;, &quot;happy_2&quot;) |&gt; summary()</code></pre>
 <pre><code>##    joblose_1       joblose_2        happy_1         happy_2     
 ##  Min.   :1.000   Min.   :1.000   Min.   :1.000   Min.   :1.000  
 ##  1st Qu.:1.000   1st Qu.:1.000   1st Qu.:2.000   1st Qu.:2.000  
@@ -417,7 +417,12 @@ head(gss[, c(&quot;joblose_1&quot;, &quot;joblose_2&quot;, &quot;happy_1&quot;, 
 ##  9        NA        NA       3       2
 ## 10         3         3       3       3</code></pre>
 <pre class="r"><code># Correlation matrix
-cor_matrix &lt;- gss %&gt;% select(&quot;joblose_1&quot;, &quot;joblose_2&quot;, &quot;happy_1&quot;, &quot;happy_2&quot;) %&gt;% cor(use = &quot;complete.obs&quot;)</code></pre>
+(cor_matrix &lt;- gss |&gt; select(&quot;joblose_1&quot;, &quot;joblose_2&quot;, &quot;happy_1&quot;, &quot;happy_2&quot;) |&gt; cor(use = &quot;complete.obs&quot;))</code></pre>
+<pre><code>##            joblose_1  joblose_2    happy_1    happy_2
+## joblose_1  1.0000000  0.3346809 -0.1617392 -0.1112386
+## joblose_2  0.3346809  1.0000000 -0.1146658 -0.1575867
+## happy_1   -0.1617392 -0.1146658  1.0000000  0.4728916
+## happy_2   -0.1112386 -0.1575867  0.4728916  1.0000000</code></pre>
 <pre class="r"><code># Correlation plot
 corrplot(cor_matrix, method = &quot;color&quot;, type = &quot;upper&quot;,
          title = &quot;Correlation Matrix&quot;, mar = c(0, 0, 1, 0))</code></pre>
