@@ -20,7 +20,7 @@ library(corrplot)
 library(sjPlot)
 library(lavaan)
 ```
-%>%
+
 ```{r}
 gss <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/GSS_panel2010w123_R6 - stata.dta")
 ```
