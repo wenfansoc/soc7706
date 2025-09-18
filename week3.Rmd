@@ -57,9 +57,9 @@ The following code calculates the within-person standard deviation and range. Th
 within_variation <- psid |>
   group_by(id) |>
   summarize(
-    yrsch_sd = sd(yrsch),
-    srh_sd = sd(srh),
-    pincome1_sd = sd(pincome1),
+    yrsch_sd = sd(yrsch, na.rm = TRUE),
+    srh_sd = sd(srh, na.rm = TRUE),
+    pincome1_sd = sd(pincome1, na.rm = TRUE),
     yrsch_rg = max(yrsch) - min(yrsch),
     srh_rg = max(srh) - min(srh),
     pincome1_rg = max(pincome1) - min(pincome1),
@@ -78,8 +78,8 @@ We can also create a few exploratory plots to visualize within- versus between-i
 between <- psid |>
   group_by(id) |>
   summarize(
-    yrsch_mean = mean(yrsch),
-    pincome1_mean = mean(pincome1),
+    yrsch_mean = mean(yrsch, na.rm = TRUE),
+    pincome1_mean = mean(pincome1, na.rm = TRUE),
     .groups = 'drop'
   )
 
@@ -96,8 +96,8 @@ within <- psid |>
   arrange(id, year) |> # Sort data by id and time
   group_by(id) |>
   mutate(
-    yrsch_ch = yrsch - dplyr::lag(yrsch), # Make sure to add dplyr:: before lag to avoid confusion with lag from other packages
-    pincome1_ch = pincome1 - dplyr::lag(pincome1)
+    yrsch_ch = yrsch - dplyr::lag(yrsch, 1), # Make sure to add dplyr:: before lag to avoid confusion with lag from other packages
+    pincome1_ch = pincome1 - dplyr::lag(pincome1, 1)
   ) |>
   ungroup() |> # Drop grouping
   filter(yrsch_ch != 0)
