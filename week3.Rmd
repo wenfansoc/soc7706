@@ -1,0 +1,303 @@
+---
+title: "Fixed-effects models"
+author: "Wen Fan"
+date: "2025-09-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  cache = FALSE
+)
+```
+
+# Install and load R packages
+
+First, load the necessary libraries and the data. For this week and the following weeks, we will use the PSID data available [here](https://www.dropbox.com/scl/fi/sa44qdsocysjbz8h9sncs/psid.dta?rlkey=bwwfgglu41jbic6zfh6jev0ub&dl=0). The PSID (Panel Study of Income Dynamics) is a longitudinal household survey that has been ongoing since 1968, collecting data on various aspects of family life, including income, employment, health, and education. I include only a subset of the original data for demonstration purposes.
+
+The key question we will explore is how changes in education (`yrsch`) and self-rated health (`srh`) affect changes in personal income (`pincome1`) over time, controlling for occupational prestige (`hwsei`).
+
+```{r message=FALSE}
+require(tidyverse)
+require(haven)
+require(sjPlot)
+require(knitr)
+require(plm)
+require(fixest)
+require(sandwich)
+require(lmtest)
+require(car)
+```
+
+```{r}
+psid <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/psid.dta")
+```
+
+# Checking within-person variation
+
+Before running fixed-effects models, let's first take a look at the data and check the within-person variation in key variables. Fixed-effects models rely on within-person changes over time to estimate effects, so it's important to ensure that there is sufficient variation within individuals.
+
+```{r check-data}
+# Data summary
+head(psid, 10) |> kable(caption = "First 10 observations of PSID data")
+
+summary(psid[, c("yrsch", "srh", "pincome1")]) |>
+  as.data.frame() |>
+  kable(caption = "Summary statistics of key variables")
+```
+
+The following code calculates the within-person standard deviation and range. The results indicate that there is sufficient variability for fixed-effects estimation.
+```{r within-variation}
+# Check within-person variation
+within_variation <- psid |>
+  group_by(id) |>
+  summarize(
+    yrsch_sd = sd(yrsch),
+    srh_sd = sd(srh),
+    pincome1_sd = sd(pincome1),
+    yrsch_rg = max(yrsch) - min(yrsch),
+    srh_rg = max(srh) - min(srh),
+    pincome1_rg = max(pincome1) - min(pincome1),
+    .groups = 'drop' # Drop all grouping information to not interfere with future operations
+  )
+
+cat("Mean within-person SD in education:", round(mean(within_variation$yrsch_sd, na.rm = TRUE), 3))
+cat("Mean within-person SD in self-reported health:", round(mean(within_variation$srh_sd, na.rm = TRUE), 3))
+cat("Mean within-person SD in income:", round(mean(within_variation$pincome1_sd, na.rm = TRUE), 3))
+```
+
+We can also create a few exploratory plots to visualize within- versus between-individual variation. There appear to be some outliers with large incomes or income changes, which we may want to investigate further (though not here).
+
+```{r }
+# Between-person variation
+between <- psid |>
+  group_by(id) |>
+  summarize(
+    yrsch_mean = mean(yrsch),
+    pincome1_mean = mean(pincome1),
+    .groups = 'drop'
+  )
+
+p_between <- ggplot(between, aes(x = yrsch_mean, y = pincome1_mean)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Between-Person Relationship",
+       x = "Average Education", 
+       y = "Average Income") +
+  theme_minimal()
+
+# Within-person changes (for those with education changes)
+within <- psid |>
+  arrange(id, year) |> # Sort data by id and time
+  group_by(id) |>
+  mutate(
+    yrsch_ch = yrsch - dplyr::lag(yrsch), # Make sure to add dplyr:: before lag to avoid confusion with lag from other packages
+    pincome1_ch = pincome1 - dplyr::lag(pincome1)
+  ) |>
+  ungroup() |> # Drop grouping
+  filter(yrsch_ch != 0)
+
+p_within <- ggplot(within, aes(x = yrsch_ch, y = pincome1_ch)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Within-Person Changes",
+       x = "Change in Education", 
+       y = "Change in Income") +
+  theme_minimal()
+
+print(p_between)
+print(p_within)
+```
+
+Before running the models, we will transform the income variable by taking the natural log to account for the skewed distribution of income. We will also add a small constant to avoid $log(0)$.
+```{r log-income}
+psid <- psid |>
+  mutate(log_pincome1 = log(pincome1 + 1))
+```
+
+# Running fixed-effects models
+
+The `plm` package provides a straightforward way to estimate various panel data models, including fixed effects. For the package to recognize the panel structure, we need to first set up the data in panel format using `pdata.frame()`.
+
+```{r data-setup}
+# Convert to panel data format for plm package
+psid_plm <- pdata.frame(psid, index = c("id", "year"))
+```
+
+Specifying `model = "within"` in the `plm()` function tells R to estimate a fixed-effects model using the within transformation approach.
+```{r plm}
+# Fixed effects model
+fe_plm <- plm(log_pincome1 ~ yrsch + srh + hwsei, data = psid_plm, model = "within")
+tab_model(fe_plm)
+
+```
+
+We can also run a fixed-effects model using the `fixest` package, which is optimized for speed and can handle large data sets efficiently. You will see a difference in observations and $R^2$ values reported between `plm` and `fixest` outputs. `plm` sometimes reports a bigger sample size but includes rows that do not really contribute to estimation.
+
+```{r fixest-estimation}
+fe_fixest <- feols(log_pincome1 ~ yrsch + srh + hwsei | id, data = psid)
+tab_model(fe_plm, fe_fixest, show.ci = FALSE, show.se = TRUE, 
+          dv.labels = c("plm", "fixest"))
+```
+
+## Comparing with first differences
+Let’s compare fixed-effects estimates from the within transformation and first differences in the two-wave case.
+
+```{r first-differences}
+fd_data <- psid |>
+  filter(year %in% c(2015, 2017)) |>
+  arrange(id, year) |>
+  group_by(id) |>
+  summarize(
+    delta_yrsch = diff(yrsch), # first difference
+    delta_srh = diff(srh),
+    delta_hwsei = diff(hwsei),
+    delta_logpincome1 = diff(log_pincome1),
+    .groups = 'drop'
+  )
+  
+# Run regression on differences (note: no intercept needed)
+fd_model <- lm(delta_logpincome1 ~ delta_yrsch + delta_srh + delta_hwsei - 1, 
+               data = fd_data)
+
+# Run plm fixed effects for comparison
+fe_plm2 <- plm(log_pincome1 ~ yrsch + srh + hwsei, data = subset(psid_plm, year %in% c(2015, 2017)), model = "within")
+
+tab_model(fd_model, fe_plm2, show.ci = FALSE, show.se = TRUE, 
+          dv.labels = c("First Differences", "Within Transformation (plm)"))
+```
+
+# Diagnostic tests and robustness checks
+
+We can perform several tests to check the appropriateness of the fixed-effects model specification. For example, we can test whether fixed effects are necessary compared to a pooled OLS model.
+
+```{r fe-vs-pooled}
+# Test for fixed effects vs pooled OLS
+pooled_ols <- lm(log_pincome1 ~ yrsch + srh + hwsei, data = psid_plm)
+pFtest(fe_plm, pooled_ols)
+```
+
+We can also test whether we need time fixed effects in addition to individual fixed effects.
+```{r fe-vs-random}
+fe_twoway <- update(fe_plm, effect = "twoways")
+pFtest(fe_twoway, fe_plm)
+```
+
+We see evidence of serial correlation and heteroskedasticity in the residuals, suggesting we should consider robust standard errors.
+```{r serial-hetero}
+# Serial correlation test
+pbgtest(fe_plm)
+
+# Heteroscedasticity test
+bptest(fe_plm)
+```
+
+## Robust standard errors
+Robust standard errors can help account for heteroskedasticity and autocorrelation in panel data. Here, we compute robust standard errors for the fixed effects model using the `sandwich` and `lmtest` packages.
+
+```{r robust-se}
+# Robust standard errors
+fe_robust <- coeftest(fe_plm, vcov = vcovHC(fe_plm, type = "HC1"))
+print(fe_robust)
+
+# Compare standard vs. robust SEs
+regular_se <- sqrt(diag(vcov(fe_plm)))
+robust_se <- sqrt(diag(vcovHC(fe_plm, type = "HC1")))
+
+comparison <- data.frame(
+  Variable = names(regular_se),
+  Regular_SE = round(regular_se, 4),
+  Robust_SE = round(robust_se, 4))
+print(comparison)
+```
+
+# Extension
+## Extension 1: Two-way fixed-effects
+
+Two-way fixed effects models control for both individual and time fixed effects, accounting for unobserved heterogeneity across individuals and over time. This is particularly useful in panel data where there may be time-specific shocks affecting all individuals.
+
+```{r two-way-fe}
+# Two-way fixed effects model using fixest
+tw_fe <- feols(log_pincome1 ~ yrsch + srh + hwsei | id + year, data = psid)
+summary(tw_fe)
+
+# Compare with one-way fixed effects
+tab_model(fe_fixest, tw_fe, show.ci = FALSE, show.se = TRUE, 
+          dv.labels = c("One-Way FE (id)", "Two-Way FE (id + year)"))
+```
+
+## Extension 2: Interaction terms in fixed-effects models
+
+In fixed-effects models, we can include interaction terms where at least one variable is time-varying. We need to demean the interaction terms, however.
+
+```{r interaction-terms}
+interaction <- psid |>
+  arrange(id, year) |>
+  group_by(id) |>
+  mutate(
+    yrsch_mean = mean(yrsch, na.rm = TRUE),
+    srh_mean = mean(srh, na.rm = TRUE),
+    yrsch_dm = yrsch - yrsch_mean,
+    srh_dm = srh - srh_mean
+  ) |>
+  ungroup() |>
+  mutate(
+    int1 = yrsch_dm * srh_dm,
+    int2 = yrsch_dm * female
+  )
+
+# Interaction term of two time-varying variables
+fe_interaction1 <- plm(log_pincome1 ~ yrsch_dm + srh_dm + hwsei + int1, data = interaction, model = "within")
+summary(fe_interaction1)
+
+# Interaction term of a time-varying and a time-invariant variable
+fe_interaction2 <- plm(log_pincome1 ~ yrsch_dm + srh + hwsei + female + int2, data = interaction, model = "within")
+summary(fe_interaction2)
+
+```
+
+## Extension 3: Asymmetric fixed-effects
+
+Sometimes effects may differ for positive vs. negative changes in the predictor variable. We can test for asymmetric effects by creating separate variables for increases and decreases in the predictor of interest (occupational prestige in this case).
+
+```{r asymmetric-setup}
+# Create positive and negative changes
+asym <- psid |>
+  arrange(id, year) |>
+  group_by(id) |>
+  mutate(
+    hwsei_ch = hwsei - dplyr::lag(hwsei),
+    # Method 1: Separate positive and negative changes
+    hwsei_increase1 = pmax(hwsei_ch, 0),
+    hwsei_decrease1 = pmin(hwsei_ch, 0),
+    # Method 2: Interaction with indicator variables
+    hwsei_increase2 = hwsei_ch * (hwsei_ch > 0),
+    hwsei_decrease2 = hwsei_ch * (hwsei_ch < 0)
+  ) |>
+  ungroup()
+
+# Examine the distribution of changes
+cat("People with prestige increases:", sum(asym$hwsei_ch > 0, na.rm = TRUE))
+cat("People with prestige decreases:", sum(asym$hwsei_ch < 0, na.rm = TRUE))
+cat("People with no change:", sum(asym$hwsei_ch == 0, na.rm = TRUE))
+```
+
+We can then run asymmetric fixed-effects models using both specifications.
+
+```{r asymmetric-estimation}
+fe_asym1 <- plm(log_pincome1 ~ hwsei_increase1 + hwsei_decrease1 + yrsch + srh, data = asym, model = "within")
+
+fe_asym2 <- plm(log_pincome1 ~ hwsei_increase2 + hwsei_decrease2 + yrsch + srh, data = asym, model = "within")
+
+tab_model(fe_asym1, fe_asym2, show.ci = FALSE, show.se = TRUE, 
+          dv.labels = c("Asym FE (Method 1)", "Asym FE (Method 2)"))
+
+# Test for symmetry
+symmetry_test <- linearHypothesis(fe_asym1, "hwsei_increase1 = -hwsei_decrease1")
+print(symmetry_test)
+```
