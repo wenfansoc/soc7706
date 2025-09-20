@@ -38,6 +38,22 @@ require(car)
 psid <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/psid.dta")
 ```
 
+# Reshape data between long and wide formats 
+
+The PSID data are currently in long format, where each row represents an observation for a person in a specific year. We can reshape it to wide format if needed, but for fixed-effects models, we typically work with long format.
+
+```{r reshape}
+# Long to wide
+psid_wide <- psid |>
+  pivot_wider(id_cols = id, names_from = year, values_from = c(yrsch, srh, pincome1, hwsei), names_sep = "_")
+
+# Wide to long
+psid_long <- psid_wide |>
+  pivot_longer(cols = starts_with(c("yrsch_", "srh_", "pincome1_", "hwsei_")),
+               names_to = c(".value", "year"),
+               names_sep = "_")
+```
+
 # Checking within-person variation
 
 Before running fixed-effects models, let's first take a look at the data and check the within-person variation in key variables. Fixed-effects models rely on within-person changes over time to estimate effects, so it's important to ensure that there is sufficient variation within individuals.

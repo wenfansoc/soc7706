@@ -381,6 +381,22 @@ require(lmtest)
 require(car)</code></pre>
 <pre class="r"><code>psid &lt;- read_dta(&quot;/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/psid.dta&quot;)</code></pre>
 </div>
+<div id="reshape-data-between-long-and-wide-formats" class="section level1">
+<h1>Reshape data between long and wide formats</h1>
+<p>The PSID data are currently in long format, where each row represents
+an observation for a person in a specific year. We can reshape it to
+wide format if needed, but for fixed-effects models, we typically work
+with long format.</p>
+<pre class="r"><code># Long to wide
+psid_wide &lt;- psid |&gt;
+  pivot_wider(id_cols = id, names_from = year, values_from = c(yrsch, srh, pincome1, hwsei), names_sep = &quot;_&quot;)
+
+# Wide to long
+psid_long &lt;- psid_wide |&gt;
+  pivot_longer(cols = starts_with(c(&quot;yrsch_&quot;, &quot;srh_&quot;, &quot;pincome1_&quot;, &quot;hwsei_&quot;)),
+               names_to = c(&quot;.value&quot;, &quot;year&quot;),
+               names_sep = &quot;_&quot;)</code></pre>
+</div>
 <div id="checking-within-person-variation" class="section level1">
 <h1>Checking within-person variation</h1>
 <p>Before running fixed-effects models, let’s first take a look at the
