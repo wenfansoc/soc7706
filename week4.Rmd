@@ -1,0 +1,229 @@
+---
+title: "Mixed-effects models (I)"
+author: "Wen Fan"
+date: "2025-09-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  cache = FALSE
+)
+```
+
+# Install and load R packages
+
+First, load the necessary libraries and the data. As before, we'll continue using the PSID data available [here](https://www.dropbox.com/scl/fi/sa44qdsocysjbz8h9sncs/psid.dta?rlkey=bwwfgglu41jbic6zfh6jev0ub&dl=0) to model personal income (`pincome1`). We'll explore how age (`age`), gender (`female`), race (`race`), education (`yrsch`), and self-rated health (`srh`) affect income over time.
+
+```{r message=FALSE}
+require(tidyverse)
+require(haven)
+require(sjPlot)
+require(lme4)
+require(car)
+require(plm)
+```
+
+Let's restrict our sample to working-age adults (18-65 years old) and load the data.
+
+```{r}
+psid <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/psid.dta")
+
+# Sample selection
+psid <- psid |>
+  filter(age >= 18 & age <= 65) |>  # Working-age adults
+  mutate(log_pincome1 = log(pincome1 + 1)) |>
+  mutate(across(c(female, race,), as.factor))
+```
+
+
+# Checking data
+
+```{r check-data}
+# Display data structure
+str(psid)
+head(psid)
+```
+
+# Visualization
+
+We can visualize the individual trajectories to get an intuitive sense of the growth patterns in earnings over time.
+
+```{r visualization}
+# Plot individual trajectories
+set.seed(12)
+psid_smp <- psid |> filter(id %in% sample(unique(id), 100)) |> # Sample for clearer visualization
+  arrange(id, age)
+  
+ggplot(psid_smp, aes(x = age, y = pincome1, group = id)) +
+  geom_line(alpha = 0.3) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "red", size = 1.5) +
+  labs(title = "Individual Earnings Trajectories Over Time",
+       x = "Age", y = "Earnings") +
+  theme_minimal()
+
+# Plot by groups
+ggplot(psid, aes(x = age, y = pincome1, color = female)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(title = "Earnings Trajectories by Gender",
+       x = "Age", y = "Earnings") +
+  theme_minimal()
+```
+
+# Model building
+## Step 1: Unconditional means model
+We'll build a series of mixed-effects models to analyze the longitudinal data. We'll start with an empty model, also known as an unconditional means model, to assess the variance components. Note that `lmer` specifies random effects using the syntax `(slope | group)`.
+
+```{r basic-models}
+# Model 1: Unconditional means model (no predictors, random intercepts only)
+model1 <- lmer(log_pincome1 ~ 1 + (1 | id), data = psid, REML = TRUE)
+summary(model1)
+```
+
+We can calculate the intra-class correlation (ICC) to obtain the proportion of variance attributable to differences between individuals.
+
+```{r icc}
+# Calculate ICC
+VarCorr(model1) # Display variance components
+var_components <- as.data.frame(VarCorr(model1))
+between_var <- var_components[var_components$grp == "id", "vcov"]
+within_var <- var_components[var_components$grp == "Residual", "vcov"]
+icc <- between_var / (between_var + within_var)
+
+cat("Intra-class Correlation (ICC):", round(icc, 3), "\n")
+```
+
+## Step 2: Unconditional growth model
+
+Next, we will add age as a predictor to model the growth trajectory of earnings over the life course. Note the warning about convergence; this is common in mixed-effects models and we'll discuss ways to address it later.
+
+```{r growth-model}
+# Model 2: Add time with random intercepts and slopes
+model2_ri <- lmer(log_pincome1 ~ age + (1 | id), data = psid, REML = TRUE)
+summary(model2_ri)
+
+model2_rs <- lmer(log_pincome1 ~ age  + (age | id), data = psid, REML = TRUE)
+summary(model2_rs)
+```
+
+For now, let's try to address the convergence issue by changing the optimizer to `bobyqa` and increasing the number of iterations for the optimizer (default is 10,000).
+
+```{r address-convergence}
+model2_rs2 <- lmer(log_pincome1 ~ age  + (age | id), data = psid, REML = TRUE, 
+                   control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(model2_rs2)
+```
+
+We can compare the two models to see if adding random slopes significantly improves the model fit.
+
+```{r model-comparison}
+anova(model2_ri, model2_rs2)
+```
+
+We can also examine the correlation between random intercepts and slopes. In this case, the correlation is negative, suggesting that individuals with higher initial earnings tend to have slower growth rates over time.
+
+```{r random-effects-corr}
+# Examine random effects variance-covariance matrix
+VarCorr(model2_rs)
+```
+
+
+## Step 3: Add time-invariant predictors
+
+Now, we will add baseline characteristics including gender (`female`) and race (`race`).
+
+```{r time-invariant-predictors}
+# Model 3: Add baseline characteristics
+model3 <- lmer(log_pincome1 ~ age + female + race + (age | id), data = psid, REML = TRUE, 
+               control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(model3)
+```
+
+We can also explore interactions between time (age) and these baseline characteristics to see if they influence the growth trajectory.
+
+```{r differential-growth}
+model3_interactions <- lmer(log_pincome1 ~ age * (female + race) + (age | id), data = psid, REML = TRUE, 
+                            control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(model3_interactions)
+
+anova(model3, model3_interactions)
+```
+
+## Step 4: Add time-varying predictors
+
+Lastly, let's include time-varying predictors such as education (`yrsch`) and self-rated health (`srh`). Below the time-varying predictor `yrsch` is decomposed into within-person and between-person components.
+
+```{r time-varying-predictors}
+psid$yrsch_gmc <- psid$yrsch - mean(psid$yrsch, na.rm = TRUE)  # Grand-mean centered
+psid$yrsch_pmc <- psid$yrsch - ave(psid$yrsch, psid$id, FUN = function(x) mean(x, na.rm = TRUE)) # Person-mean centered
+psid$yrsch_between <- ave(psid$yrsch, psid$id, FUN = function(x) mean(x, na.rm = TRUE))  # Between-person component
+
+# Within-between decomposition model
+model4 <- lmer(log_pincome1 ~ age + female + race + srh + 
+                yrsch_pmc + yrsch_between +  # Within and between effects of education
+                (age | id), data = psid, REML = TRUE, 
+               control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(model4)
+```
+
+Similarly, we can center age (the time variable) for interpretability. For example, centering age at baseline, grand-mean centering, or centering at a meaningful value (e.g., 40 years old). Note that centering affects the interpretation of the intercept.
+
+```{r centering-time}
+psid$age_baseline <- psid$age  # Age centered at baseline (0)
+psid$age_gmc <- psid$age - mean(psid$age, na.rm = TRUE)  # Grand-mean centered
+psid$age_40 <- psid$age - 40  # Center age at 40
+
+# Compare models with different time centering
+model_baseline <- lmer(log_pincome1 ~ age_baseline + female + race + srh + yrsch + (age_baseline | id), data = psid, REML = TRUE, control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+
+model_gmc <- lmer(log_pincome1 ~ age_gmc + female + race + srh + yrsch + (age_gmc | id), data = psid, REML = TRUE, control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+
+model_40 <- lmer(log_pincome1 ~ age_40 + female + race + srh + yrsch + (age_40 | id), data = psid, REML = TRUE, control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+
+tab_model(model_baseline, model_gmc, model_40, 
+          show.re.var = TRUE,
+          show.icc = TRUE,
+          show.obs = TRUE,
+          title = "Models with Different Time Centering")
+```
+
+# Nonlinear growth patterns
+
+We can explore nonlinear growth patterns by adding polynomial terms or piecewise linear terms. The piecewise linear model can be useful if we expect different growth rates at different life stages. The coefficients can be interpreted as the change in earnings per year before and after the knot point (e.g., age 40).
+
+```{r nonlinear-growth}
+# Quadratic growth model
+model_quad <- lmer(log_pincome1 ~ age + I(age^2) + (age | id), data = psid, REML = TRUE, 
+                   control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(model_quad)
+
+# Piecewise linear growth
+psid$age_40 <- pmax(0, psid$age - 40) # Create a piecewise linear spline for age after 40
+
+model_piecewise <- lmer(log_pincome1 ~ age + age_40 + (age | id), data = psid, REML = TRUE,
+                        control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(model_piecewise)
+```
+
+# Hausman test
+
+To compare mixed-effects models with fixed-effects models, we can use the Hausman test. The `plm` package allows us to fit both fixed and random effects models and perform the Hausman test to determine if the random effects model is appropriate.
+
+```{r hausman-test}
+# Create panel data
+panel_data <- pdata.frame(psid, index = c("id", "age"))
+
+# Fixed effects model
+fe_model <- plm(log_pincome1 ~ age + yrsch + srh, data = panel_data, model = "within")
+
+# Random effects model  
+re_model <- plm(log_pincome1 ~ age + yrsch + srh, data = panel_data, model = "random")
+
+# Hausman test
+phtest(fe_model, re_model)
+```
