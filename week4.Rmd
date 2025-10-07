@@ -150,8 +150,6 @@ We can also explore interactions between time (age) and these baseline character
 model3_interactions <- lmer(log_pincome1 ~ age * (female + race) + (age | id), data = psid, REML = TRUE, 
                             control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
 summary(model3_interactions)
-
-anova(model3, model3_interactions)
 ```
 
 ## Step 4: Add time-varying predictors

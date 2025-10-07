@@ -741,14 +741,6 @@ summary(model3_interactions)</code></pre>
 ## optimizer (bobyqa) convergence code: 0 (OK)
 ## Model is nearly unidentifiable: very large eigenvalue
 ##  - Rescale variables?</code></pre>
-<pre class="r"><code>anova(model3, model3_interactions)</code></pre>
-<pre><code>## Data: psid
-## Models:
-## model3: log_pincome1 ~ age + female + race + (age | id)
-## model3_interactions: log_pincome1 ~ age * (female + race) + (age | id)
-##                     npar    AIC    BIC logLik -2*log(L)  Chisq Df Pr(&gt;Chisq)
-## model3                10 160298 160382 -80139    160278                     
-## model3_interactions   14 160302 160419 -80137    160274 4.7627  4     0.3125</code></pre>
 </div>
 <div id="step-4-add-time-varying-predictors" class="section level2">
 <h2>Step 4: Add time-varying predictors</h2>
