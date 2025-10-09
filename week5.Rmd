@@ -1,0 +1,312 @@
+---
+title: "Mixed-effects models (II)"
+author: "Wen Fan"
+date: "2025-10-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  cache = FALSE
+)
+```
+
+# Install and load R packages
+
+First, load the necessary libraries and the data. As before, we'll continue using the PSID data available [here](https://www.dropbox.com/scl/fi/sa44qdsocysjbz8h9sncs/psid.dta?rlkey=bwwfgglu41jbic6zfh6jev0ub&dl=0) to model personal income (`pincome1`). We'll explore how age (`age`), gender (`female`), race (`race`), education (`yrsch`), and self-rated health (`srh`) affect income over time.
+
+```{r message=FALSE}
+require(tidyverse)
+require(haven)
+require(sjPlot)
+require(lme4)
+require(nlme)
+require(performance)
+require(merTools)
+```
+
+Let's load the data and restrict our sample to working-age adults (18-65 years old).
+
+```{r}
+psid <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/psid.dta")
+
+# Sample selection
+psid <- psid |>
+  filter(age >= 18 & age <= 65) |>  # Working-age adults
+  drop_na(pincome1, age, yrsch, srh, female, race, id) |>  # Remove missing cases
+  mutate(log_pincome1 = log(pincome1 + 1)) |>
+  mutate(across(c(female, race,), as.factor)) |>
+  mutate(age_c = scale(age, center = TRUE, scale = FALSE), yrsch_c = scale(yrsch, center = TRUE, scale = FALSE)) # Center age and education
+```
+
+# Model comparison
+
+REML is preferred for comparing models that differ only in their random effects structure, while MLE is used for comparing models with different fixed effects. For example, we can compare a random intercept model (m1) with a random slope model (m2) using REML, though we need to use a mixture of chi-square tests for significance (as opposed to the usual chi-square test in `anova`).
+
+```{r re-comparison}
+m1 <- lmer(log_pincome1 ~ age + yrsch + srh + female + race + (1 | id), data = psid)
+m2 <- lmer(log_pincome1 ~ age + yrsch + srh + female + race + (1 + age | id), data = psid, control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+
+anova(m1, m2, refit = FALSE) ## refit = FALSE to avoid refitting models with MLE
+
+# Simulate mixture chi-square distribution for testing random slopes
+n <- 100000
+rand.chisq <- 1/2 * rchisq(n, df = 1) + 1/2 * rchisq(n, df = 2) # Mixture chi-square distribution
+lambda <- as.numeric(-2 * (logLik(m1) - logLik(m2))) # Difference in -2 log-likelihoods
+lambda
+mean(rand.chisq > lambda) ## p-value
+```
+
+To compare models with different fixed effects, we need to refit them using MLE (i.e., `REML = FALSE`). Alternatively, the `anova` function can automatically refit models with MLE if they were originally fitted with REML.
+
+```{r fe-comparison}
+m1_ml <- lmer(log_pincome1 ~ age + yrsch + srh + female + race + (1 | id), data = psid, REML = FALSE)
+m3 <- lmer(log_pincome1 ~ age + yrsch + srh + race + (1 | id), data = psid, REML = FALSE)
+
+anova(m1_ml, m3)
+```
+
+# Model diagnostics
+## Level-1 residuals
+After fitting a mixed-effects model, it's crucial to assess its assumptions and fit. We'll use the model with random slopes for age as an example (m2). Let's first look at level-1 residuals.
+
+```{r model-diagnostics-l1}
+# Level-1 residuals and fitted values
+psid$resid_l1 <- residuals(m2)
+psid$fitted <- fitted(m2)
+
+# Q-Q plot
+ggplot(psid, aes(sample = resid_l1)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot: Level-1 Residuals")
+
+# Residuals vs. time
+ggplot(psid, aes(x = age, y = resid_l1)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(se = FALSE) +
+  theme_minimal() +
+  labs(title = "Level-1 Residuals vs. Age",
+       x = "Age", y = "Residuals")
+
+# Residuals vs. fitted values
+ggplot(psid, aes(x = fitted, y = resid_l1)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(se = FALSE) +
+  theme_minimal() +
+  labs(title = "Level-1 Residuals vs. Fitted Values",
+       x = "Fitted Values", y = "Residuals")
+
+```
+
+To test for autocorrelation in the residuals, we can use the `acf` function or the `performance` package for a more general check. ACF plots show the correlation of residuals with their own lagged values. Significant autocorrelation indicates that residuals are not independent over time. The blue dotted lines represent the 95% confidence interval; correlations outside this range are considered statistically significant.
+
+```{r autocorrelation}
+acf(psid$resid_l1) 
+check_autocorrelation(m2)
+```
+
+## Level-2 random effects
+How about level-2 random effects? We can extract the random effects using the `ranef` function and visualize them.
+
+```{r model-diagnostics-l2}
+# Extract random effects
+re <- ranef(m2)$id
+colnames(re) <- c("Intercept", "Age_Slope")
+
+# Q-Q plot for random intercepts and random slopes
+ggplot(re, aes(sample = Intercept)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot: Random Intercepts")
+
+ggplot(re, aes(sample = Age_Slope)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  theme_minimal() +
+  labs(title = "Q-Q Plot: Random Slopes (Age)")
+
+# Bivariate plot of random effects
+ggplot(re, aes(x = Intercept, y = Age_Slope)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_minimal() +
+  labs(title = "Random Intercepts vs Random Slopes",
+       x = "Random Intercept", y = "Random Slope (Age)")
+```
+
+## Outliers and influential observations
+To identify outliers and influential observations, we can use standardized residuals (for level-1) or Cook's distance (for level-2
+).
+
+```{r outliers-influential}
+# Standardized residuals
+psid$stdres <- resid(m2, type = "pearson") / sd(resid(m2, type = "pearson"))
+
+# Flag potential outliers (e.g., absolute value of stdres > 3)
+outliers1 <- psid |>
+  filter(abs(stdres) > 3) |>
+  dplyr::select(id, year, log_pincome1, stdres)
+head(outliers1)
+
+
+# Cook's distance for subjects
+cooksd <- cooks.distance(m2, obs = FALSE) # obs = FALSE for each group/subject
+psid_cooks <- data.frame(id = names(cooksd), cooksd = cooksd)
+
+# Flag potential outliers (e.g., cooksd > 4/n)
+n_subjects <- length(unique(psid$id))
+outliers2 <- psid_cooks |>
+  filter(cooksd > 4/n_subjects)
+head(outliers2)
+```
+
+# Convergence issues
+
+Sometimes, mixed-effects models may have convergence issues, especially with complex random effects structures. [This webpage](https://rdrr.io/cran/lme4/man/convergence.html) in the `lme4` documentation provides useful tips for diagnosing and addressing convergence problems.
+
+# Variance explained
+
+We can assess the variance explained by our predictors using R-squared values. The `performance` package provides functions to calculate marginal and conditional R-squared for mixed models. Marginal R-squared represents the variance explained by fixed effects alone, while conditional R-squared includes both fixed and random effects.
+
+Note that the model is doing a reasonable job explaining why different individuals differ from each other (17% of between-group variance), but it's not capturing why observations within the same individual vary (essentially 0% of within-group variance).
+
+```{r variance-explained}
+r2_nakagawa(m2)
+r2_nakagawa(m2, by_group = TRUE) # R-squared at each level
+```
+
+# Predictions
+
+For population-level predictions, we use the fixed effects only.
+
+```{r predictions}
+# Create new data for prediction
+new_data <- expand.grid(
+  age = seq(min(psid$age, na.rm = TRUE), 
+            max(psid$age, na.rm = TRUE), 
+            length.out = 50),
+  yrsch = 16,
+  srh = median(psid$srh, na.rm = TRUE),
+  female = factor("0", levels = levels(psid$female)),
+  race = factor("1", levels = levels(psid$race)),   
+  id = psid$id[1]
+)
+
+# Population-level predictions (fixed effects only)
+preds <- predictInterval(m2, newdata = new_data, level = 0.95,
+                         which = "fixed",  # Marginal/population predictions
+                         n.sims = 1000)
+new_data$pred_marginal <- preds$fit
+new_data$lower <- preds$lwr
+new_data$upper <- preds$upr
+
+# Back-transform to original scale
+new_data$pred_income <- exp(new_data$pred_marginal)
+new_data$lower_income <- exp(new_data$lower)
+new_data$upper_income <- exp(new_data$upper)
+
+# Plot
+ggplot(new_data, aes(x = age, y = pred_income)) +
+  geom_line(color = "blue", size = 1) +
+  geom_ribbon(aes(ymin = lower_income, ymax = upper_income), alpha = 0.2) +
+  scale_y_log10(
+    labels = scales::dollar,  # Show as dollars
+    breaks = c(1000, 5000, 10000, 50000, 100000, 500000) # Log scale for better visualization
+  ) + 
+  theme_minimal() +
+  labs(title = "Population-Level Prediction: Effect of Age on Income",
+       x = "Age", y = "Predicted Income ($, log scale)")
+```
+
+For subject-specific predictions, we include both fixed and random effects. We can visualize the fitted trajectories for a few randomly selected individuals.
+
+```{r subject-specific-predictions}
+sample_ids <- sample(unique(psid$id), 6)
+sample_data <- psid |> filter(id %in% sample_ids)
+
+# Subject-specific predictions
+sample_data$pred_conditional <- predict(m2, newdata = sample_data)
+
+# Plot
+ggplot(sample_data, aes(x = age, y = log_pincome1, color = id)) +
+  geom_point(alpha = 0.6) +
+  geom_line(aes(y = pred_conditional), size = 1) +
+  facet_wrap(~ id) +
+  theme_minimal() +
+  labs(title = "Subject-Specific Predictions",
+       x = "Age", y = "Log Income") +
+  theme(legend.position = "none")
+```
+
+# Model visualization
+
+```{r model-visualization}
+# Plot fixed effects
+plot_model(m2, type = "est", show.values = TRUE, value.offset = 0.3)
+
+# Effect plot for specific predictor
+plot_model(m2, type = "pred", terms = "age")
+
+```
+
+
+# Extensions
+## Multiple random slopes
+
+We can allow both age and education to vary by individual.
+
+```{r multiple-random-slopes}
+m4 <- lmer(log_pincome1 ~ age_c + yrsch_c + srh + female + race + (1 + age_c + yrsch_c | id), data = psid, control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(m4)
+```
+
+We can also specify uncorrelated random effects by using separate terms for each random effect.
+
+```{r random-effects-covariance}
+m2_diag <- lmer(log_pincome1 ~ age + yrsch + srh + female + race + 
+           (1 | id) + (0 + age | id),  # Two separate terms = independent
+           data = psid, control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+summary(m2_diag)
+```
+
+Other covariance structures can be difficult to implement with standard syntax and may require custom coding.
+
+## Three-level models
+
+If we have data with three levels (e.g., measurements nested within individuals, and individuals nested within families), we can specify a three-level model. Here, we'll assume `famid` represents family IDs.
+
+```{r three-level-model}
+# m3l <- lmer(log_pincome1 ~ age_c + yrsch_c + srh + female + race + (1 | famid:id) + (1 | famid), data = psid)
+```
+
+## Residual correlation structures
+
+To specify residual correlation structures, we need to use the `nlme` package as `lme4` does not support this feature.
+
+```{r ar1-correlation}
+# Independence
+ind <- lme(log_pincome1 ~ age + yrsch + srh + female + race, 
+           random = ~ 1 + age | id, data = psid, method = "REML")
+summary(ind)
+
+# Compound symmetry
+cs <- lme(log_pincome1 ~ age + yrsch + srh + female + race, 
+          random = ~ 1 + age | id, correlation = corCompSymm(form = ~ age | id), data = psid, method = "REML")
+summary(cs)
+
+# AR(1) correlation structure
+ar1 <- lme(log_pincome1 ~ age + yrsch + srh + female + race, 
+           random = ~ 1 + age | id, correlation = corAR1(form = ~ age | id), data = psid, method = "REML")
+summary(ar1)
+```
