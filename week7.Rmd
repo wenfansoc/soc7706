@@ -1,0 +1,289 @@
+---
+title: "Duration models (I)"
+author: "Wen Fan"
+date: "2025-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  cache = FALSE
+)
+```
+
+# Install and load R packages
+
+First, load the necessary libraries and the data. For event history analysis, we'll continue using the PSID data available [here](https://www.dropbox.com/scl/fi/sa44qdsocysjbz8h9sncs/psid.dta?rlkey=bwwfgglu41jbic6zfh6jev0ub&dl=0) to model transition to parents.
+
+```{r message=FALSE}
+require(tidyverse)
+require(haven)
+require(sjPlot)
+require(survival)
+require(broom)
+require(survminer)
+require(flexsurv)
+```
+
+```{r}
+psid <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/psid.dta")
+
+# Sample selection
+psid <- psid |>
+  mutate(across(c(female, region), as.factor)) |>
+  filter(age >= 15 & age <= 45) # Focus on prime childbearing ages
+```
+
+# Creating survival objects
+
+For survival analysis, we first need to create survival objects using the `Surv()` function from the `survival` package. The `time` argument in the `Surv()` function specifies the follow-up duration until the event or censoring occurs, while the `event` argument indicates whether the event occurred (1) or not (0). There are many ways to define the starting point of the "clock." For example, it could start at age 15, at the age when the individual first entered the study, since birth, or from the time they entered a relationship, among others. Here, we simply use the age at transition or censoring as the time variable. In other words, the clock starts at age 0 for everyone.
+
+Let's use the `anykid` variable (i.e., having any minor children living at home) to construct an event indicator (1 = has any child, 0 = no child) and a time variable representing the age at first childbirth. This is not a perfect measure of the transition to parenthood, but it will work for demonstration purposes.
+
+```{r survival-data}
+surv_data <- psid |>
+  arrange(id, year) |>
+  group_by(id) |>
+  mutate(
+    # even indicator
+    became_parent = (anykid == 1 & lag(anykid) == 0),
+    
+    # ever experienced the event
+    ever_became_parent = as.numeric(any(became_parent, na.rm = TRUE)),
+    
+    # age when event happened
+    age_at_transition = ifelse(ever_became_parent == 1, 
+                               age[which(became_parent)[1]], 
+                               max(age, na.rm = TRUE)),
+  
+    # identify left-censoring cases (those who had children before entering the study)
+    left_censored = ifelse(first(anykid, na_rm = TRUE) == 1, 1, 0)
+  ) |>
+  slice(1) |> # Keep one row per person
+  ungroup() |>
+  select(id, ever_became_parent, age_at_transition, left_censored, female, region) |>
+  drop_na(age_at_transition, ever_became_parent) |>
+  filter(left_censored == 0) |> # Drop left-censored cases
+  filter(age_at_transition >= 15) # Drop those with event before age 15 (likely outliers)
+```
+
+You can also specify censoring types in the `Surv()` function using the `type` argument. The default is right-censoring, which is what we need here.  We have already removed left-censoring cases in the data preparation step. For the survival object, note that "+" indicates right-censoring, "?" indicates unknown event status, and "" indicates the event occurred.
+
+```{r create-surv-object}
+# Create survival object
+surv_obj <- Surv(time = surv_data$age_at_transition, event = surv_data$ever_became_parent)
+head(surv_obj)
+```
+
+# Life table method
+
+We can create life table using `survfit` with `type = "fleming-harrington"`, which approximates the actuarial method.
+
+```{r life-table}
+life_table <- survfit(surv_obj ~ 1, data = surv_data, type = "fleming-harrington")
+
+# Display life table summary at specific times
+summary(life_table, times = c(0, 15, 25, 30, 35, 40, 45))
+```
+
+# Kaplan-Meier estimation
+
+We can estimate the Kaplan-Meier survival function using the `survfit()` function.
+
+```{r km-estimation}
+# Fit Kaplan-Meier model
+km <- survfit(surv_obj ~ 1, data = surv_data)
+
+# Summary of KM estimates
+summary(km)
+tidy(km)
+
+# Plot Kaplan-Meier curve
+plot(km, xlab = "Age", ylab = "Survival Probability", main = "Kaplan-Meier Survival Curve")
+```
+
+## Comparing groups using enhanced KM plot
+
+We can use `gsurvplot` from the `survminer` package to create enhanced Kaplan-Meier plots with confidence intervals and risk tables.
+
+```{r enhanced-km-plot}
+km_gender <- survfit(surv_obj ~ female, data = surv_data)
+
+ggsurvplot(km_gender,
+           data = surv_data,
+           risk.table = TRUE,
+           conf.int = TRUE,
+           surv.median.line = "hv", # Add horizontal and vertical lines at median survival
+           legend.labs = c("Male", "Female"),
+           ggtheme = theme_minimal(),
+           title = "Kaplan-Meier Survival Curve with 95% CI")
+```
+
+# Log-rank test
+
+We can use log-rank test to compare survival curves between groups such as by region.
+
+```{r log-rank}
+survdiff(surv_obj ~ region, data = surv_data)
+```
+
+# Median survival time
+
+We can estimate the median survival time using the `surv_median()` function from the `survminer` package.
+
+```{r median-survival}
+median_surv <- surv_median(km)
+median_surv
+
+# By group
+median_surv_gender <- surv_median(km_gender)
+median_surv_gender
+```
+
+# Parametric survival models
+
+For parametric survival models, we can use the `survreg()` function from the `survival` package or the `flexsurvreg()` function from the `flexsurv` package. The two functions differ slightly in syntax and functionality, with `flexsurvreg()` offering support for a broader range of distributions. Here, we will fit several common parametric models: exponential, Weibull, log-normal, log-logistic, and Gompertz.
+
+## Exponential model
+
+Note that `survreg()` uses the AFT (accelerated failure time) parameterization, which models survival times. In contrast, `flexsurvreg()` models the hazard rate in the case of exponential models.
+
+```{r exponential-model}
+exp_fit <- survreg(surv_obj ~ female + region, data = surv_data, dist = "exponential")
+summary(exp_fit)
+
+# Alternatively, using flexsurv package
+exp_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "exponential")
+exp_flex
+```
+
+## Weibull model
+
+For Weibull models, both `survreg()` and `flexsurvreg()` use the AFT parameterization.
+
+```{r weibull-model}
+weib_fit <- survreg(surv_obj ~ female + region, data = surv_data, dist = "weibull")
+summary(weib_fit)
+
+# Alternatively, using flexsurv package
+weib_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "weibull")
+weib_flex
+```
+
+## Log-normal model
+
+For log-normal models, both `survreg()` and `flexsurvreg()` use the AFT parameterization.
+
+```{r lognormal-model}
+logn_fit <- survreg(surv_obj ~ female + region, data = surv_data, dist = "lognormal")
+summary(logn_fit)
+
+# Alternatively, using flexsurv package
+logn_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "lognormal")
+logn_flex
+```
+
+## Log-logistic model
+
+For log-logistic models, both `survreg()` and `flexsurvreg()` use the AFT parameterization.
+
+```{r loglogistic-model}
+logl_fit <- survreg(surv_obj ~ female + region, data = surv_data,dist = "loglogistic")
+summary(logl_fit)
+
+# Alternatively, using flexsurv package
+logl_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "llogis")
+logl_flex
+```
+
+## Gompertz model
+
+Gompertz models are not available in `survreg()`, but can be fitted using `flexsurvreg()`, which models the hazard rate.
+
+```{r gompertz-model}
+gomp_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "gompertz")
+gomp_flex
+```
+
+## Model comparison
+
+```{r model-comparison}
+# Extract AIC values
+models <- list(
+  Exponential = exp_flex,
+  Weibull = weib_flex,
+  LogNormal = logn_flex,
+  LogLogistic = logl_flex,
+  Gompertz = gomp_flex
+)
+
+# Compare BICs
+bic_values <- sapply(models, BIC)
+print(bic_values)
+
+# Likelihood ratio test for nested models (exponential vs Weibull, as exponential is nested within Weibull)
+lr_test <- 2 * (logLik(weib_fit) - logLik(exp_fit))
+p_value <- pchisq(lr_test, df = 1, lower.tail = FALSE)
+cat("LR test statistic:", lr_test, "\n")
+cat("p-value:", p_value, "\n")
+```
+
+## Predicted survival times
+
+We can obtain predicted survival times (e.g., median or mean survival times) from the fitted parametric models.
+
+```{r predicted-times}
+# Get predicted median survival times from log-normal model
+pred_median <- predict(logn_fit, type = "quantile", p = 0.5)
+head(pred_median)
+
+# Get predicted mean survival times
+pred_mean <- predict(logn_fit, type = "response")
+head(pred_mean)
+
+# Create new data for prediction
+new_data <- data.frame(
+  female = factor(c(1, 0, 1, 0, 1, 0, 1, 0, 1, 0)), 
+  region = factor(c(1, 1, 2, 2, 3, 3, 4, 4, 5, 5))
+)
+
+# Predict for new data
+pred_new <- predict(logn_fit, newdata = new_data, type = "quantile", p = 0.5)
+print(pred_new)
+```
+
+## Plotting parametric survival curves
+
+There are multiple red curves representing different parametric models. Here, we plot the survival curve for the log-normal model and compare hazard functions across different models.
+```{r parametric-plots}
+# Plot survival curves for different models
+plot(logn_flex, type = "survival", 
+     xlab = "Age", 
+     ylab = "Survival Probability",
+     main = "Log-Normal Survival Curve")
+
+# Compare different parametric models
+models_flex <- list(
+  Exponential = exp_flex,
+  Weibull = weib_flex,
+  LogNormal = logn_flex,
+  Gompertz = gomp_flex
+)
+
+# Create comparison plot
+par(mfrow = c(2, 2))
+for(i in 1:4) {
+  plot(models_flex[[i]], type = "hazard",
+       xlab = "Age",
+       ylab = "Hazard",
+       main = paste(names(models_flex)[i], "Hazard Function"))
+}
+par(mfrow = c(1, 1))
+```
+
+## Cox-Snell residuals for model diagnostics
