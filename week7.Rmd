@@ -124,12 +124,20 @@ ggsurvplot(km_gender,
            title = "Kaplan-Meier Survival Curve with 95% CI")
 ```
 
-# Log-rank test
+# Log-rank test and Wilcoxon test
 
 We can use log-rank test to compare survival curves between groups such as by region.
 
 ```{r log-rank}
 survdiff(surv_obj ~ region, data = surv_data)
+```
+
+We can also conduct Wilcoxon test by specifying the `rho` parameter in the `survdiff()` function.
+
+
+```{r wilcoxon-tarone-ware}
+# Wilcoxon (Breslow) test
+survdiff(surv_obj ~ region, data = surv_data, rho = 1)
 ```
 
 # Median survival time
@@ -175,9 +183,17 @@ weib_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "w
 weib_flex
 ```
 
-## Log-normal model
 
-For log-normal models, both `survreg()` and `flexsurvreg()` use the AFT parameterization.
+## Gompertz model
+
+Gompertz models are not available in `survreg()`, but can be fitted using `flexsurvreg()`, which models the hazard rate. The shape parameter indicates whether the hazard is increasing (shape > 0) or decreasing (shape < 0) over time.
+
+```{r gompertz-model}
+gomp_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "gompertz")
+gomp_flex
+```
+
+## Log-normal model
 
 ```{r lognormal-model}
 logn_fit <- survreg(surv_obj ~ female + region, data = surv_data, dist = "lognormal")
@@ -190,8 +206,6 @@ logn_flex
 
 ## Log-logistic model
 
-For log-logistic models, both `survreg()` and `flexsurvreg()` use the AFT parameterization.
-
 ```{r loglogistic-model}
 logl_fit <- survreg(surv_obj ~ female + region, data = surv_data,dist = "loglogistic")
 summary(logl_fit)
@@ -199,15 +213,6 @@ summary(logl_fit)
 # Alternatively, using flexsurv package
 logl_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "llogis")
 logl_flex
-```
-
-## Gompertz model
-
-Gompertz models are not available in `survreg()`, but can be fitted using `flexsurvreg()`, which models the hazard rate.
-
-```{r gompertz-model}
-gomp_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "gompertz")
-gomp_flex
 ```
 
 ## Model comparison
