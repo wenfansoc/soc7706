@@ -51,18 +51,23 @@ surv_data <- psid |>
   group_by(id) |>
   mutate(
     # even indicator
-    became_parent = (anykid == 1 & lag(anykid) == 0),
-    
+    became_parent = case_when(
+      is.na(anykid) | is.na(lag(anykid)) ~ NA_real_,
+      anykid == 1 & lag(anykid) == 0 ~ 1,
+      TRUE ~ 0),
+
     # ever experienced the event
-    ever_became_parent = as.numeric(any(became_parent, na.rm = TRUE)),
+    ever_became_parent = max(became_parent, na.rm = TRUE),
     
     # age when event happened
-    age_at_transition = ifelse(ever_became_parent == 1, 
-                               age[which(became_parent)[1]], 
-                               max(age, na.rm = TRUE)),
+    age_at_transition = case_when(
+      ever_became_parent == 1 ~ age[which(became_parent == 1)[1]],
+      ever_became_parent == 0 ~ age[n()],  # Last observation's age
+      TRUE ~ NA_real_
+    ),
   
     # identify left-censoring cases (those who had children before entering the study)
-    left_censored = ifelse(first(anykid, na_rm = TRUE) == 1, 1, 0)
+    left_censored = if_else(anykid[1] == 1, 1, 0, missing = 0)
   ) |>
   slice(1) |> # Keep one row per person
   ungroup() |>
@@ -82,7 +87,7 @@ head(surv_obj)
 
 # Life table method
 
-We can create life table using `survfit` with `type = "fleming-harrington"`, which approximates the actuarial method.
+We can use `survfit` with `type = "fleming-harrington"`, which approximates the actuarial method.
 
 ```{r life-table}
 life_table <- survfit(surv_obj ~ 1, data = surv_data, type = "fleming-harrington")
@@ -172,7 +177,7 @@ exp_flex
 
 ## Weibull model
 
-For Weibull models, both `survreg()` and `flexsurvreg()` use the AFT parameterization.
+For Weibull models, both `survreg()` and `flexsurvreg()` use the AFT parameterization. The "shape" parameter in the Weibull distribution indicates whether the hazard is increasing (shape $> 1$), decreasing (shape $< 1$), or constant (shape $= 1$, which reduces to the exponential model) over time.
 
 ```{r weibull-model}
 weib_fit <- survreg(surv_obj ~ female + region, data = surv_data, dist = "weibull")
@@ -186,7 +191,7 @@ weib_flex
 
 ## Gompertz model
 
-Gompertz models are not available in `survreg()`, but can be fitted using `flexsurvreg()`, which models the hazard rate. The shape parameter indicates whether the hazard is increasing (shape > 0) or decreasing (shape < 0) over time.
+Gompertz models are not available in `survreg()`, but can be fitted using `flexsurvreg()`, which models the hazard rate. The shape parameter indicates whether the hazard is increasing (shape $> 0$) or decreasing (shape $< 0$) over time.
 
 ```{r gompertz-model}
 gomp_flex <- flexsurvreg(surv_obj ~ female + region, data = surv_data, dist = "gompertz")
@@ -247,14 +252,10 @@ We can obtain predicted survival times (e.g., median or mean survival times) fro
 pred_median <- predict(logn_fit, type = "quantile", p = 0.5)
 head(pred_median)
 
-# Get predicted mean survival times
-pred_mean <- predict(logn_fit, type = "response")
-head(pred_mean)
-
 # Create new data for prediction
 new_data <- data.frame(
-  female = factor(c(1, 0, 1, 0, 1, 0, 1, 0, 1, 0)), 
-  region = factor(c(1, 1, 2, 2, 3, 3, 4, 4, 5, 5))
+  female = factor(c(0, 0, 0, 0, 0, 1, 1, 1, 1, 1)), 
+  region = factor(c(1, 2, 3, 4, 5, 1, 2, 3, 4, 5))
 )
 
 # Predict for new data
@@ -266,8 +267,13 @@ print(pred_new)
 
 There are multiple red curves representing different parametric models. Here, we plot the survival curve for the log-normal model and compare hazard functions across different models.
 ```{r parametric-plots}
-# Plot survival curves for different models
+# Plot survival and hazard curves for different models
 plot(logn_flex, type = "survival", 
+     xlab = "Age", 
+     ylab = "Survival Probability",
+     main = "Log-Normal Survival Curve")
+
+plot(logn_flex, type = "hazard", 
      xlab = "Age", 
      ylab = "Survival Probability",
      main = "Log-Normal Survival Curve")
@@ -276,8 +282,8 @@ plot(logn_flex, type = "survival",
 models_flex <- list(
   Exponential = exp_flex,
   Weibull = weib_flex,
-  LogNormal = logn_flex,
-  Gompertz = gomp_flex
+  Gompertz = gomp_flex,
+  LogNormal = logn_flex
 )
 
 # Create comparison plot
@@ -290,5 +296,3 @@ for(i in 1:4) {
 }
 par(mfrow = c(1, 1))
 ```
-
-## Cox-Snell residuals for model diagnostics
