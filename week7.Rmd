@@ -275,8 +275,8 @@ plot(logn_flex, type = "survival",
 
 plot(logn_flex, type = "hazard", 
      xlab = "Age", 
-     ylab = "Survival Probability",
-     main = "Log-Normal Survival Curve")
+     ylab = "Hazard",
+     main = "Log-Normal Hazard Curve")
 
 # Compare different parametric models
 models_flex <- list(
