@@ -1,0 +1,238 @@
+---
+title: "Duration models (II)"
+author: "Wen Fan"
+date: "2025-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  cache = FALSE
+)
+```
+
+# Install and load R packages
+
+First, load the necessary libraries and the data. For event history analysis, we'll continue using the PSID data available [here](https://www.dropbox.com/scl/fi/sa44qdsocysjbz8h9sncs/psid.dta?rlkey=bwwfgglu41jbic6zfh6jev0ub&dl=0) to model transition to parents.
+
+```{r message=FALSE}
+require(tidyverse)
+require(haven)
+require(sjPlot)
+require(survival)
+require(survminer)
+require(sandwich)
+require(lmtest)
+```
+
+```{r}
+psid <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/psid.dta")
+
+# Sample selection
+psid <- psid |>
+  mutate(across(c(female, region), as.factor)) |>
+  filter(age >= 15 & age <= 45) # Focus on prime childbearing ages
+```
+
+# Creating survival objects
+
+```{r survival-data}
+surv_data <- psid |>
+  arrange(id, year) |>
+  group_by(id) |>
+  mutate(
+    # even indicator
+    became_parent = case_when(
+      is.na(anykid) | is.na(lag(anykid)) ~ NA_real_,
+      anykid == 1 & lag(anykid) == 0 ~ 1,
+      TRUE ~ 0),
+
+    # ever experienced the event
+    ever_became_parent = max(became_parent, na.rm = TRUE),
+    
+    # age when event happened
+    age_at_transition = case_when(
+      ever_became_parent == 1 ~ age[which(became_parent == 1)[1]],
+      ever_became_parent == 0 ~ age[n()],  # Last observation's age
+      TRUE ~ NA_real_
+    ),
+  
+    # identify left-censoring cases (those who had children before entering the study)
+    left_censored = if_else(anykid[1] == 1, 1, 0, missing = 0)
+  ) |>
+  slice(1) |> # Keep one row per person
+  ungroup() |>
+  select(id, became_parent, ever_became_parent, age_at_transition, left_censored, age, female, region) |>
+  drop_na(age_at_transition, ever_became_parent) |>
+  filter(left_censored == 0) |> # Drop left-censored cases
+  filter(age_at_transition >= 15) # Drop those with event before age 15 (likely outliers)
+
+surv_obj <- Surv(time = surv_data$age_at_transition, event = surv_data$ever_became_parent)
+```
+
+# Cox proportional hazards model
+
+We can fit a Cox proportional hazards model using the `coxph()` function from the `survival` package. Similar to last time, we will model the hazard of becoming a parent as a function of gender and region. The "Concordance" statistic in the output indicates the predictive accuracy of the model, i.e., how well the model predicts the order of events, with values closer to 1 indicating better prediction and values around 0.5 indicating no better than random chance.
+
+```{r cox-model}
+cox <- coxph(surv_obj ~ female + region, data = surv_data)
+summary(cox)
+```
+
+## Different methods for handling ties
+
+The Cox model can handle tied event times using different methods. The three common methods are "exact", "breslow", and "efron". The default method in R is "efron."
+
+```{r ties-methods}
+coxph(surv_obj ~ female + region, data = surv_data, ties = "exact")
+coxph(surv_obj ~ female + region, data = surv_data, ties = "breslow")
+coxph(surv_obj ~ female + region, data = surv_data, ties = "efron") # Default
+```
+
+## Test the proportional hazards assumption
+
+We can test the proportional hazards assumption using several methods, including graphical methods and statistical tests based on Schoenfeld residuals.
+
+The Kaplan-Meier survival curves can be plotted by groups to visually inspect if the curves cross, which would indicate a violation of the proportional hazards assumption. Additionally, log-log plots can be created to assess the assumption.
+
+```{r phtests-graphs}
+# Plot survival function by gender
+fit_km <- survfit(surv_obj ~ female, data = surv_data)
+ggsurvplot(fit_km, data = surv_data, risk.table = TRUE)
+
+# Log-log plots
+plot(fit_km, fun = "cloglog", col = c("blue", "red"),
+     xlab = "Logged time", ylab = "Log(-Log(Survival))")
+```
+
+We can also fit Cox models with time-varying coefficients to directly test for violations of the proportional hazards assumption. This involves including interactions between covariates and functions of time. Note that the `tt()` function is used to specify time-dependent covariates and the covariate must be numeric for the interaction.
+
+```{r phtests-time-varying}
+surv_data$female_num <- as.numeric(surv_data$female == "1") # Convert to numeric for interaction
+
+# Simple time-varying coefficient
+coxph(surv_obj ~ female + region + tt(female_num), data = surv_data,
+                  tt = function(x, t, ...) x * t)
+
+# With time threshold (t > 30)
+coxph(surv_obj ~ female + region + tt(female_num), data = surv_data,
+                  tt = function(x, t, ...) x * (t > 30))
+
+# With log(time)
+coxph(surv_obj ~ female + region + tt(female_num), data = surv_data,
+                  tt = function(x, t, ...) x * log(t))
+```
+
+Schoenfeld residuals can also be used to test the proportional hazards assumption. The `cox.zph()` function performs this test and provides both statistical tests and plots of the Schoenfeld residuals against time.
+
+```{r phtests-schoenfeld}
+# Schoenfeld residuals test
+cox_fit <- coxph(surv_obj ~ female + region, data = surv_data)
+test_ph <- cox.zph(cox_fit)
+print(test_ph)
+plot(test_ph, var = "female") 
+```
+
+## Estimate survivor and hazard functions
+
+We can estimate and plot the baseline survival function as well as survival curves for different groups using the `survfit()` function.
+
+```{r surv-functions}
+# Baseline survival function
+cox_fit <- coxph(surv_obj ~ female + region, data = surv_data)
+base_surv <- survfit(cox_fit, newdata = data.frame(
+  female = factor(0),
+  region = factor(1)))
+plot(base_surv, xlab = "Time", ylab = "Survival Probability")
+
+# Survival curves by gender
+new_data <- data.frame(female = factor(c(0, 1)), region = factor(c(1, 1)))
+surv_curves <- survfit(cox_fit, newdata = new_data)
+plot(surv_curves, col = c("blue", "red"), xlab = "Time", ylab = "Survival")
+legend("topright", c("Men", "Women"), col = c("blue", "red"), lty = 1)
+```
+
+## Stratified model
+
+The Cox model can be stratified by a categorical variable to allow for different baseline hazards across strata. Here, we stratify by gender using the `strata()` function.
+
+```{r stratified-cox}
+cox_strat <- coxph(surv_obj ~ region + strata(female), data = surv_data)
+```
+
+
+# Discrete-time models
+
+We can also model the transition to parenthood using discrete-time survival analysis. This involves restructuring the data into a person-period format, where each row represents a time interval for an individual. We will then fit logistic regression and complementary log-log models to estimate the hazard of becoming a parent.
+
+```{r}
+surv_discrete <- psid |>
+  arrange(id, year) |>
+  group_by(id) |>
+  mutate(
+    # even indicator
+    became_parent = case_when(
+      is.na(anykid) | is.na(lag(anykid)) ~ NA_real_,
+      anykid == 1 & lag(anykid) == 0 ~ 1,
+      TRUE ~ 0),
+
+    # ever experienced the event
+    ever_became_parent = max(became_parent, na.rm = TRUE),
+    
+    # age when event happened
+    age_at_transition = case_when(
+      ever_became_parent == 1 ~ age[which(became_parent == 1)[1]],
+      ever_became_parent == 0 ~ age[n()],  # Last observation's age
+      TRUE ~ NA_real_
+    ),
+  
+    # identify left-censoring cases (those who had children before entering the study)
+    left_censored = if_else(anykid[1] == 1, 1, 0, missing = 0)
+  ) |>
+  ungroup() |>
+  select(id, became_parent, ever_became_parent, age_at_transition, left_censored, age, female, region) |>
+  filter(left_censored == 0) |> # Drop left-censored cases
+  filter(age_at_transition >= 15 & age <= age_at_transition) # Drop those with event before age 15 or after event/censoring time
+```
+After fitting the models, we use cluster-robust standard errors to account for the repeated measures within individuals. We can also use `predict()` (`type = "response"`) to estimate the discrete-time hazard rates from the fitted models. Here, we first fit logistic regression models for discrete-time survival analysis.
+
+```{r discrete-time-logit}
+# 1. Logit with interactions (test proportional hazards)
+logit1 <- glm(became_parent ~ female * age + region * age, data = surv_discrete,
+              family = binomial(link = "logit"))
+coeftest(logit1, vcov = vcovCL(logit1, cluster = surv_discrete$id)) # Cluster-robust standard errors
+
+# 2. Logit with age as step function (factor)
+logit2 <- glm(became_parent ~ female + region + factor(age), data = surv_discrete,
+              family = binomial(link = "logit"))
+coeftest(logit2, vcov = vcovCL(logit2, cluster = surv_discrete$id))
+
+# 3. Logit with age as polynomial
+logit3 <- glm(became_parent ~ female + region + age + I(age^2), data = surv_discrete,
+              family = binomial(link = "logit"))
+coeftest(logit3, vcov = vcovCL(logit3, cluster = surv_discrete$id))
+```
+
+Complementary log-log (cloglog) models can also be fitted for discrete-time survival analysis. The cloglog link function is particularly useful when the underlying continuous-time hazard is assumed to follow a proportional hazards model.
+
+```{r discrete-time-cloglog}
+# 1. Cloglog with interactions (test proportional hazards)
+cloglog1 <- glm(became_parent ~ female * age + region * age, data = surv_discrete,
+                family = binomial(link = "cloglog"))
+coeftest(cloglog1, vcov = vcovCL(cloglog1, cluster = surv_discrete$id))
+
+# 2. Cloglog with age as step function
+cloglog2 <- glm(became_parent ~ female + region + factor(age), data = surv_discrete,
+                family = binomial(link = "cloglog"))
+coeftest(cloglog2, vcov = vcovCL(cloglog2, cluster = surv_discrete$id))
+
+# 3. Cloglog with age as polynomial
+cloglog3 <- glm(became_parent ~ female + region + age + I(age^2), data = surv_discrete,
+                family = binomial(link = "cloglog"))
+coeftest(cloglog3, vcov = vcovCL(cloglog3, cluster = surv_discrete$id))
+```
