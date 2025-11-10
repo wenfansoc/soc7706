@@ -1,0 +1,111 @@
+---
+title: "Time series models"
+author: "Wen Fan"
+date: "2025-11-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  cache = FALSE
+)
+```
+
+# Install and load R packages
+
+First, load the necessary libraries and the data. For time series and dynamic models, we'll use a state-level data set available [here](https://www.dropbox.com/scl/fi/kum7pd202degyrwfs6i1w/state.dta?rlkey=pmpumuv908xkybm8es42rs11s&dl=0).
+
+```{r message=FALSE}
+require(tidyverse)
+require(haven)
+require(sjPlot)
+require(plm)
+require(tseries)
+require(forecast)
+require(sandwich)
+require(car)
+require(lmtest)
+require(lmtest)
+```
+
+We can check the variables in the dataset and whether the panel data are balanced or not.
+
+```{r}
+state <- read_dta("/Users/wenfan/Library/CloudStorage/Dropbox/Longitudinal Data/state.dta")
+
+summary(state)
+
+pdata <- pdata.frame(state, index = c("state", "year"))
+
+is.pbalanced(pdata) # Check panel balance
+```
+
+# Time series analysis (single state)
+
+Let's focus on one state, California, to perform time series analysis.
+
+## Exploratory data analysis
+
+We will visualize the data. The `ts` function is used to create a time series object, which we can then analyze using various time series techniques. Here, we plot the original series, its first difference, and the ACF and PACF plots to assess stationarity.
+
+After differencing, the series appears stationary. The ACF of the original series decays very slowly, which indicates non-stationarity and supports the need for differencing. The PACF cuts off after lag 1, suggesting an AR(1) model may be appropriate.
+
+```{r}
+# Extract California data for time series analysis
+ca <- state[state$state == "California", ]
+ca_ts <- ts(ca$realincomepc, start = min(ca$year), frequency = 1) # ts object
+
+# Plot the series
+par(mfrow = c(2, 2))
+plot(ca_ts, main = "California Real Income Per Capita", ylab = "Income")
+plot(diff(ca_ts), main = "First Differenced", ylab = "Change in Income")
+acf(ca_ts, main = "ACF of Income")
+pacf(ca_ts, main = "PACF of Income")
+```
+
+## Stationarity tests
+
+We can conduct stationarity tests such as the Augmented Dickey-Fuller (ADF) test, Phillips-Perron (PP) test, and Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test. A significant result in the ADF and PP tests indicates stationarity, while a significant result in the KPSS test suggests non-stationarity. Here, all tests indicate that the original series is non-stationary.
+
+```{r}
+# ADF Test
+adf.test(ca_ts)
+
+# Phillips-Perron Test
+pp.test(ca_ts)
+
+# KPSS Test
+kpss.test(ca_ts)
+```
+
+## ARIMA modeling
+
+To conduct an automatic ARIMA model selection and forecasting, we can use the `forecast` package. The output suggests an ARIMA(0,1,0) with drift model is appropriate for the California income data. This means the series is best modeled as a random walk with a drift term. A drift indicates a consistent upward or downward trend over time.
+
+```{r }
+# Automatic ARIMA selection
+auto_arima <- auto.arima(ca_ts)
+summary(auto_arima)
+```
+
+We can check the residuals of the fitted model to ensure they behave like white noise. If the residuals are uncorrelated and normally distributed, it indicates a good fit. The Ljung-Box test can be used to formally test for autocorrelation in the residuals. Here, the p-value is slightly smaller than 0.05, suggesting some autocorrelation may be present, but overall the model seems adequate.
+
+```{r}
+# Residual diagnostics
+checkresiduals(auto_arima)
+```
+
+Finally, we can generate forecasts for the next 10 periods.
+
+```{r}
+# Forecast
+ca_forecast <- forecast(auto_arima, h = 10)
+plot(ca_forecast, main = "California Income Forecast")
+```
+
+# Dynamic models
