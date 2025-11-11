@@ -108,4 +108,45 @@ ca_forecast <- forecast(auto_arima, h = 10)
 plot(ca_forecast, main = "California Income Forecast")
 ```
 
-# Dynamic models
+# Distributed lag models
+
+## Finite distributed lag (FDL) model
+
+The finite distributed lag (FDL) model includes current and past values of the independent variable to capture delayed effects. Here, we create lags for the independent variable `lnff` (logged fossil fuel consumption) and estimate the FDL model using fixed effects.
+
+```{r}
+# Create lags for independent variables
+pdata$lnff_lag1 <- lag(pdata$lnff, 1)
+pdata$lnff_lag2 <- lag(pdata$lnff, 2)
+
+# FDL model
+fdl <- plm(lnrenper ~ lnff + lnff_lag1 + lnff_lag2 + lnpop + lnind, data = pdata, model = "within")
+summary(fdl)
+```
+
+We can calculate the long-run effect of `lnff` by summing the coefficients of the current and lagged terms. Since there is no lagged dependent variable in this model, the denominator is simply 1.
+
+```{r}
+# Calculate long-run effect for lnff
+sum(coef(fdl)[c("lnff", "lnff_lag1", "lnff_lag2")]) / (1 - 0)
+```
+
+## Autoregressive distributed lag (ARDL) model
+
+In the ARDL model, we include lagged values of both the dependent and independent variables. This allows us to capture both short-term dynamics and long-term relationships. Here, we create a lag for the dependent variable `lny` (logged income per capita) and estimate the ARDL model.
+
+```{r}
+# Create additional lags
+pdata$lnrenper_lag1 <- lag(pdata$lnrenper, 1)
+pdata$lnpop_lag1 <- lag(pdata$lnpop, 1)
+pdata$lnind_lag1 <- lag(pdata$lnind, 1)
+
+# ARDL Model
+ardl <- plm(lnrenper ~ lnrenper_lag1 + lnff + lnff_lag1 + lnpop + lnpop_lag1 + lnind + lnind_lag1, data = pdata, model = "within")
+summary(ardl)
+
+# Calculate long-run multipliers
+(coef(ardl)["lnff"] + coef(ardl)["lnff_lag1"]) / (1 - coef(ardl)["lnrenper_lag1"])
+(coef(ardl)["lnpop"] + coef(ardl)["lnpop_lag1"]) / (1 - coef(ardl)["lnrenper_lag1"])
+(coef(ardl)["lnind"] + coef(ardl)["lnind_lag1"]) / (1 - coef(ardl)["lnrenper_lag1"])
+```
