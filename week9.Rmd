@@ -30,7 +30,7 @@ require(forecast)
 require(sandwich)
 require(car)
 require(lmtest)
-require(lmtest)
+require(corrplot)
 ```
 
 We can check the variables in the dataset and whether the panel data are balanced or not.
@@ -108,19 +108,15 @@ ca_forecast <- forecast(auto_arima, h = 10)
 plot(ca_forecast, main = "California Income Forecast")
 ```
 
-# Distributed lag models
+# Dynamic models
 
 ## Finite distributed lag (FDL) model
 
-The finite distributed lag (FDL) model includes current and past values of the independent variable to capture delayed effects. Here, we create lags for the independent variable `lnff` (logged fossil fuel consumption) and estimate the FDL model using fixed effects.
+The finite distributed lag (FDL) model includes current and past values of the independent variables to capture delayed effects. Here, we include lags for the independent variable `lnff` (logged fossil fuel consumption) and estimate the FDL model using fixed-effects.
 
 ```{r}
-# Create lags for independent variables
-pdata$lnff_lag1 <- lag(pdata$lnff, 1)
-pdata$lnff_lag2 <- lag(pdata$lnff, 2)
-
 # FDL model
-fdl <- plm(lnrenper ~ lnff + lnff_lag1 + lnff_lag2 + lnpop + lnind, data = pdata, model = "within")
+fdl <- plm(lnrenper ~ lnff + lag(lnff, 1) + lag(lnff, 2) + lnpop + lnind, data = pdata, model = "within")
 summary(fdl)
 ```
 
@@ -128,25 +124,160 @@ We can calculate the long-run effect of `lnff` by summing the coefficients of th
 
 ```{r}
 # Calculate long-run effect for lnff
-sum(coef(fdl)[c("lnff", "lnff_lag1", "lnff_lag2")]) / (1 - 0)
+sum(coef(fdl)[c("lnff", "lag(lnff, 1)", "lag(lnff, 2)")]) / (1 - 0)
 ```
 
 ## Autoregressive distributed lag (ARDL) model
 
-In the ARDL model, we include lagged values of both the dependent and independent variables. This allows us to capture both short-term dynamics and long-term relationships. Here, we create a lag for the dependent variable `lny` (logged income per capita) and estimate the ARDL model.
+In the ARDL model, we include lagged values of both the dependent and independent variables. Here, we include a lag for the dependent variable `lnrenper` (logged renewable energy consumption) and estimate the ARDL model.
 
 ```{r}
-# Create additional lags
-pdata$lnrenper_lag1 <- lag(pdata$lnrenper, 1)
-pdata$lnpop_lag1 <- lag(pdata$lnpop, 1)
-pdata$lnind_lag1 <- lag(pdata$lnind, 1)
-
 # ARDL Model
-ardl <- plm(lnrenper ~ lnrenper_lag1 + lnff + lnff_lag1 + lnpop + lnpop_lag1 + lnind + lnind_lag1, data = pdata, model = "within")
+ardl <- plm(lnrenper ~ lag(lnrenper, 1) + lnff + lag(lnff, 1) + lnpop + lag(lnpop, 1) + lnind + lag(lnind, 1), data = pdata, model = "within")
 summary(ardl)
 
 # Calculate long-run multipliers
-(coef(ardl)["lnff"] + coef(ardl)["lnff_lag1"]) / (1 - coef(ardl)["lnrenper_lag1"])
-(coef(ardl)["lnpop"] + coef(ardl)["lnpop_lag1"]) / (1 - coef(ardl)["lnrenper_lag1"])
-(coef(ardl)["lnind"] + coef(ardl)["lnind_lag1"]) / (1 - coef(ardl)["lnrenper_lag1"])
+(coef(ardl)["lnff"] + coef(ardl)["lag(lnff, 1)"]) / (1 - coef(ardl)["lag(lnrenper, 1)"])
+(coef(ardl)["lnpop"] + coef(ardl)["lag(lnpop, 1)"]) / (1 - coef(ardl)["lag(lnrenper, 1)"])
+(coef(ardl)["lnind"] + coef(ardl)["lag(lnind, 1)"]) / (1 - coef(ardl)["lag(lnrenper, 1)"])
+```
+
+## Mean group (MG) estimator
+
+To obtain the mean group (MG) estimator, we can use the `pmg` function from the `plm` package. This estimator allows for heterogeneous slopes across cross-sectional units by estimating separate regressions for each unit and then averaging the coefficients. Setting `model = "mg"` specifies the standard mean group estimator, while `model = "dmg"` 
+would demean the variables cross-sectionally to reduce the influence of common factors.
+
+```{r}
+mg <- pmg(lnrenper ~ lnff + lnpop + lnind, data = pdata, model = "mg")
+summary(mg)
+
+dmg <- pmg(lnrenper ~ lnff + lnpop + lnind, data = pdata, model = "dmg")
+summary(dmg)
+```
+
+## Cross-sectional dependence
+
+We can test for cross-sectional dependence in the residuals of our fixed effects model using the Pesaran CD test or the Breusch-Pagan LM test. Significant results from these tests indicate the presence of cross-sectional dependence, which can affect the validity of our estimates.
+
+```{r}
+fe <- plm(lnrenper ~ lnff + lnpop + lnind, data = pdata, model = "within")
+
+# Pesaran CD test
+pcdtest(fe, test = "cd")
+
+# Breusch-Pagan LM test
+pcdtest(fe, test = "lm")
+```
+
+## Two-way fixed-effects
+
+We discussed two-way fixed-effects models previously. Here, a significant result from the $F$-test comparing the two-way fixed-effects model to the one-way fixed-effects model indicates that time fixed-effects are important in explaining the variation in the dependent variable.
+
+```{r}
+twfe <- plm(lnrenper ~ lnff + lnpop + lnind, data = pdata, model = "within", effect = "twoways")
+summary(twfe)
+
+# Test for time fixed effects
+pFtest(twfe, fe)
+```
+
+## Common correlated effects (CCE) estimator
+
+Two-way fixed-effects may not fully address cross-sectional dependence. The common correlated effects (CCE) estimator includes cross-sectional averages of the dependent and independent variables to account for unobserved common factors. The option `model = "mg"` specifies the mean group version of the CCE estimator, and the `model = p` specifies the pooled CCE estimator.
+
+```{r}
+ccemg <- pcce(lnrenper ~ lnff + lnpop + lnind, data = pdata, model = "mg")
+summary(ccemg)
+
+ccep <- pcce(lnrenper ~ lnff + lnpop + lnind, data = pdata, model = "p")
+summary(ccep)
+```
+
+## Nickell bias
+
+Let's use a simulated example to illustrate Nickell bias in dynamic panel data models. The following function (created by Claude) simulates panel data with a lagged dependent variable and estimates the fixed-effects model multiple times to assess the bias in the estimated coefficient of the lagged dependent variable with alternatives for the number of time periods ($T$).
+
+```{r}
+simulate_nickell_bias <- function(N = 50, T = 10, rho = 0.7, n_sim = 500) {
+  bias_results <- numeric(n_sim)
+  
+  for (sim in 1:n_sim) {
+    # Generate panel data
+    sim_data <- expand.grid(id = 1:N, time = 1:T)
+    sim_data <- sim_data[order(sim_data$id, sim_data$time), ]
+    
+    # Individual effects
+    alpha <- rnorm(N, 0, 1)
+    sim_data$alpha <- rep(alpha, each = T)
+    
+    # Generate y with AR(1) process
+    sim_data$y <- NA
+    for (i in 1:N) {
+      idx <- which(sim_data$id == i)
+      y_i <- numeric(T)
+      y_i[1] <- alpha[i] + rnorm(1)
+      for (t in 2:T) {
+        y_i[t] <- rho * y_i[t-1] + alpha[i] + rnorm(1)
+      }
+      sim_data$y[idx] <- y_i
+    }
+    
+    # Create lagged y
+    sim_data$y_lag <- ave(sim_data$y, sim_data$id,
+                          FUN = function(x) c(NA, x[-length(x)]))
+    
+    # Estimate FE model
+    psim <- pdata.frame(sim_data, index = c("id", "time"))
+    fe_sim <- plm(y ~ y_lag, data = psim, model = "within")
+    
+    bias_results[sim] <- coef(fe_sim)["y_lag"] - rho
+  }
+  
+  return(bias_results)
+}
+
+# Run simulation
+set.seed(123)
+T_sim1 <- 10  # Small T
+bias_sim <- simulate_nickell_bias(N = 50, T = T_sim1, rho = 0.7, n_sim = 500)
+cat("Mean simulated bias:", round(mean(bias_sim), 4), "\n")
+T_sim2 <- 30  # Larger T
+bias_sim <- simulate_nickell_bias(N = 50, T = T_sim2, rho = 0.7, n_sim = 500)
+cat("Mean simulated bias:", round(mean(bias_sim), 4), "\n")
+T_sim3 <- 50  # Even larger T
+bias_sim <- simulate_nickell_bias(N = 50, T = T_sim3, rho = 0.7, n_sim = 500)
+cat("Mean simulated bias:", round(mean(bias_sim), 4), "\n")
+```
+
+We can calculate the approximate Nickell bias for our actual data set. The formula for the Nickell bias is approximately $- \frac{1 + \rho}{T - 1}$, where $\rho$ is the true coefficient on the lagged dependent variable and $T$ is the number of time periods.
+
+```{r}
+# Dynamic FE (subject to Nickell bias)
+nb <- plm(lnrenper ~ lag(lnrenper, 1) + lnff + lnpop + lnind, data = pdata, model = "within")
+summary(nb)
+
+# Calculate approximate Nickell bias
+T_periods <- length(unique(pdata$year))
+rho_hat <- coef(nb)["lag(lnrenper, 1)"]
+-(1 + rho_hat) / (T_periods - 1)
+```
+
+## GMM estimators
+
+To address Nickell bias, we can use Generalized Method of Moments (GMM) estimators such as the Arellano-Bond (difference GMM) and Blundell-Bond (system GMM) estimators. These methods use lagged values of the dependent variable as instruments to obtain consistent estimates. Robust standard errors can be used to account for heteroskedasticity and autocorrelation.
+
+The Sargan test assesses the validity of the instruments used in the GMM estimation. A non-significant result indicates that the instruments are valid. The autocorrelation test checks for serial correlation in the residuals. We expect to find first-order autocorrelation (AR(1)) but not second-order autocorrelation (AR(2)) for the model to be valid. The Wald test evaluates the overall significance of the model.
+
+```{r}
+# Arellano-Bond (Difference GMM)
+ab_gmm <- pgmm(lnrenper ~ lag(lnrenper, 1) + lnff + lnpop + lnind | lag(lnrenper, 2:5),
+               data = pdata, effect = "twoways", model = "onestep",
+               transformation = "d")
+summary(ab_gmm, robust = TRUE)
+
+# Blundell-Bond (System GMM)
+bb_gmm <- pgmm(lnrenper ~ lag(lnrenper, 1) + lnff + lnpop + lnind | lag(lnrenper, 2:5),
+               data = pdata, effect = "individual", model = "twosteps",
+               transformation = "ld")
+summary(bb_gmm, robust = TRUE)
 ```
